@@ -37,19 +37,36 @@ DyckTransformer/
 └── requirements.txt
 ```
 
-## Installation
+## Replicating Results
 
-**Prerequisites:**
-- Python 3.8+
-- SageMath (only for Dyck word generation)
-- CUDA-compatible GPU (optional)
+### Step 0 — Clone the repository
 
 ```bash
 git clone https://github.com/cocoxhuang/DyckTransformer.git
 cd DyckTransformer
 ```
 
-### Training environment (Python venv)
+### Step 1 — Install SageMath (if not already installed)
+
+SageMath is required for data generation and for running the analysis notebooks.
+Install it via conda (in Linux)
+
+```bash
+conda create -n sage sage python=3.11
+```
+
+Or follow the [official SageMath installation guide](https://doc.sagemath.org/html/en/installation/).
+
+### Step 2 — Generate the dataset (SageMath environment)
+
+```bash
+conda activate sage
+python dyck_data.py --n 13
+```
+
+This saves the dataset to `data/dyck_data_13.pkl` and only needs to be run once.
+
+### Step 3 — Set up the training environment (Python venv)
 
 ```bash
 python -m venv .venv
@@ -61,25 +78,21 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Data generation environment (SageMath via conda)
-
-SageMath must be installed via conda for Dyck word generation:
+### Step 4 — Train the model (venv)
 
 ```bash
-conda create -n sage sage python=3.11
-conda activate sage
-pip install -r requirements.txt
+python train.py
 ```
 
-## Data Generation
+The training script loads the cached `.pkl` from Step 2 and does **not** require SageMath.
 
-Generate and cache a dataset for semilength `n` independently of training:
-```bash
-conda activate sage
-python dyck_data.py --n 13
-```
+### Step 5 — Run analysis notebooks (SageMath kernel)
 
-This saves to `data/dyck_data_13.pkl`. Training will also generate and cache data automatically on first run.
+> **Note:** Pre-trained model checkpoints are already included in the repository. You can skip Steps 2–4 entirely and go straight to analysis without generating data or training a model.
+
+Open `Analysis.ipynb` in Jupyter and select the **SageMath** kernel (the `sage` conda environment). The notebook imports SageMath utilities for Dyck word generation alongside the analysis functions.
+
+---
 
 ## Training
 

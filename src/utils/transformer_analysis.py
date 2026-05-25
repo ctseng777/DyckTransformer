@@ -42,6 +42,7 @@ def analyze_cross_attention(model, examples, start_idx=0, step=3, att_head=2, fi
         axes = axes.flatten()
     
     all_outputs = []
+    im = None
     
     for i in range(num_examples):
         ex_idx = start_idx + i
@@ -67,7 +68,28 @@ def analyze_cross_attention(model, examples, start_idx=0, step=3, att_head=2, fi
         is_correct = (outputs["generated_tokens"][0, -max_new_tokens:] == targets[-max_new_tokens:]).all().item()
         
         # Extract cross-attention for visualization
-        crs_att = outputs['attention_history'][step]['decoder'][0]['cross_attention'][0, att_head, :, :].squeeze()
+        # Expected shape is (batch, heads, query_len, key_len), but query_len can be 1 at early steps.
+        crs_att_raw = outputs['attention_history'][step]['decoder'][0]['cross_attention']
+
+        # Handle different possible tensor shapes
+        if crs_att_raw.dim() == 4:
+            crs_att = crs_att_raw[0, att_head, :, :]  # Remove batch dim, select head
+        elif crs_att_raw.dim() == 3:
+            crs_att = crs_att_raw[att_head, :, :]  # Select head if no batch dim
+        elif crs_att_raw.dim() == 2:
+            crs_att = crs_att_raw  # Already a matrix
+        else:
+            print(f"Warning: Unexpected cross-attention tensor shape: {crs_att_raw.shape}")
+            crs_att = crs_att_raw.squeeze()
+
+        # Ensure we have a 2D tensor for imshow
+        if crs_att.dim() == 1:
+            crs_att = crs_att.unsqueeze(0)
+        elif crs_att.dim() > 2:
+            while crs_att.dim() > 2 and crs_att.size(0) == 1:
+                crs_att = crs_att.squeeze(0)
+            if crs_att.dim() == 1:
+                crs_att = crs_att.unsqueeze(0)
         
         # Plot in subplot
         ax = axes[i]
@@ -85,7 +107,8 @@ def analyze_cross_attention(model, examples, start_idx=0, step=3, att_head=2, fi
         # Optional diagonal line
         if show_diagonal:
             height, width = crs_att.shape
-            ax.plot([1, width-1], [height-2, 0], 'r--', linewidth=1, alpha=0.8)
+            if height > 1 and width > 1:
+                ax.plot([1, width-1], [height-2, 0], 'r--', linewidth=1, alpha=0.8)
     
     # Hide unused subplots
     for i in range(num_examples, len(axes)):
@@ -96,8 +119,9 @@ def analyze_cross_attention(model, examples, start_idx=0, step=3, att_head=2, fi
     plt.subplots_adjust(top=0.9, right=0.9, hspace=0.4, wspace=0.3)
     
     # Add shared colorbar with proper positioning
-    cbar = fig.colorbar(im, ax=axes[:num_examples], shrink=0.8, aspect=30, pad=0.02)
-    cbar.set_label('Attention Score', fontsize=10)
+    if im is not None:
+        cbar = fig.colorbar(im, ax=axes[:num_examples], shrink=0.8, aspect=30, pad=0.02)
+        cbar.set_label('Attention Score', fontsize=10)
     
     # Add main title with proper spacing
     fig.suptitle(f'Cross-Attention Head {att_head} at Step {step} Generation', fontsize=16, y=0.95)
@@ -216,12 +240,13 @@ def analyze_decoder_attention(model, examples, start_idx=0, step=10, att_head=0,
     
     return all_outputs
 
-def analyze_cross_attention_all_steps(model, examples, ex_idx=0, att_head=2, cmap='Blues', figsize=(20, 6), show_diagonal=False):
+def analyze_cross_attention_all_steps(model, examples, dataset, ex_idx=0, att_head=2, cmap='Blues', figsize=(20, 6), show_diagonal=False):
     """
     Visualize cross-attention for all generation steps for a single example.
     Args:
         model: The transformer model
         examples: Dict with 'inputs' and 'targets'
+        dataset: The dataset object (for decoding)
         ex_idx: Index of the example to analyze
         att_head: Attention head to visualize
         cmap: Colormap for the attention heatmap
@@ -246,7 +271,7 @@ def analyze_cross_attention_all_steps(model, examples, ex_idx=0, att_head=2, cma
     generated = outputs["generated_tokens"][0][-max_new_tokens:]
     
     # Calculate grid dimensions: 4 subplots per row (including Dyck path plot)
-    cols = 5
+    cols = 7
     total_plots = num_steps + 1  # +1 for Dyck path plot
     rows = (total_plots + cols - 1) // cols  # Ceiling division
     
@@ -267,13 +292,14 @@ def analyze_cross_attention_all_steps(model, examples, ex_idx=0, att_head=2, cma
     ax = axes_flat[0]
     
     # Plot input, target, and generated paths
-    input_x, input_y = word_to_path(inputs.cpu().numpy())
-    target_x, target_y = word_to_path(targets.cpu().numpy())
-    gen_x, gen_y = word_to_path(generated.cpu().numpy())
+    input_x, input_y = word_to_path(decode(inputs.cpu().numpy(), dataset.dictionary).split())
+    target_x, target_y = word_to_path(decode(targets.cpu().numpy(), dataset.dictionary).split())
+    gen_x, gen_y = word_to_path(decode(generated.cpu().numpy(), dataset.dictionary).split())
     
     ax.plot(input_x, input_y, 'b-', label='Input', linewidth=2, alpha=0.7)
     ax.plot(target_x, target_y, 'g-', label='Target', linewidth=2, alpha=0.7)
     ax.plot(gen_x, gen_y, 'r--', label='Generated', linewidth=2, alpha=0.7)
+    
     # draw y = x line
     max_coord = max(max(gen_x) if gen_x else 0, max(gen_y) if gen_y else 0)
     ax.plot([0, max_coord], [0, max_coord], 'k--', linewidth=0.5, alpha=0.5)
@@ -323,7 +349,7 @@ def analyze_cross_attention_all_steps(model, examples, ex_idx=0, att_head=2, cma
         ax.set_xlabel('Input Pos', fontsize=8)
         
         # Only show y-label on leftmost column (excluding first plot)
-        if plot_idx % cols == 1:  # Second column (first attention plot in each row)
+        if plot_idx % cols == 0:  # First column (first attention plot in each row)
             ax.set_ylabel('Gen Pos', fontsize=8)
         else:
             ax.set_ylabel('')
@@ -727,79 +753,31 @@ def analyze_positional_embeddings_pca(model, module = "encoder", n_components=28
     pca_2d = PCA(n_components=2)
     pos_pca_2d = pca_2d.fit_transform(pos_encoding_weights)
 
-    # Create comprehensive PCA visualization
-    fig = plt.figure(figsize=figsize)
-    fig.suptitle(f"{module} positional embeddings PCA", fontsize=16, y=0.98)
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    fig.suptitle(f"{module} positional embeddings PCA", fontsize=16, y=1.02)
 
     # Plot 1: 2D PCA scatter plot
-    plt.subplot(2, 3, 1)
-    scatter = plt.scatter(pos_pca_2d[:, 0], pos_pca_2d[:, 1], c=range(len(pos_pca_2d)), cmap='viridis', alpha=0.8, s=50)
-    plt.colorbar(scatter, label='Position Index')
-    plt.xlabel(f'PC1 ({pca_2d.explained_variance_ratio_[0]:.2%} variance)')
-    plt.ylabel(f'PC2 ({pca_2d.explained_variance_ratio_[1]:.2%} variance)')
-    plt.title('PCA: Positions in 2D Space', pad=20)
-    plt.grid(True, alpha=0.3)
+    ax1 = axes[0]
+    scatter = ax1.scatter(pos_pca_2d[:, 0], pos_pca_2d[:, 1], c=range(len(pos_pca_2d)), cmap='viridis', alpha=0.8, s=50)
+    fig.colorbar(scatter, ax=ax1, label='Position Index')
+    ax1.set_xlabel(f'PC1 ({pca_2d.explained_variance_ratio_[0]:.2%} variance)')
+    ax1.set_ylabel(f'PC2 ({pca_2d.explained_variance_ratio_[1]:.2%} variance)')
+    ax1.set_title('PCA: Positions in 2D Space')
+    ax1.grid(True, alpha=0.3)
 
-    # Add position labels for small datasets
     if plot_labels:
         for i, (x, y) in enumerate(pos_pca_2d):
-            plt.annotate(str(i), (x, y), xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
+            ax1.annotate(str(i), (x, y), xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
 
-    # Plot 2: Explained variance ratio
-    plt.subplot(2, 3, 2)
-    plt.plot(range(1, n_components + 1), pca.explained_variance_ratio_, 'bo-')
-    plt.xlabel('Principal Component')
-    plt.ylabel('Explained Variance Ratio')
-    plt.title('Explained Variance by Component', pad=20)
-    plt.grid(True, alpha=0.3)
+    # Plot 2: Explained variance by component
+    ax2 = axes[1]
+    ax2.plot(range(1, n_components + 1), pca.explained_variance_ratio_, 'bo-')
+    ax2.set_xlabel('Principal Component')
+    ax2.set_ylabel('Explained Variance Ratio')
+    ax2.set_title('Explained Variance by Component')
+    ax2.grid(True, alpha=0.3)
 
-    # Plot 3: Cumulative explained variance
-    plt.subplot(2, 3, 3)
-    cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-    plt.plot(range(1, n_components + 1), cumulative_variance, 'ro-')
-    plt.axhline(y=0.95, color='g', linestyle='--', alpha=0.7, label='95% variance')
-    plt.axhline(y=0.99, color='r', linestyle='--', alpha=0.7, label='99% variance')
-    plt.xlabel('Number of Components')
-    plt.ylabel('Cumulative Explained Variance')
-    plt.title('Cumulative Explained Variance', pad=20)
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-
-    # Plot 4: Position trajectory in PC1-PC2 space
-    plt.subplot(2, 3, 4)
-    plt.plot(pos_pca_2d[:, 0], pos_pca_2d[:, 1], 'o-', alpha=0.7, markersize=4)
-    plt.scatter(pos_pca_2d[0, 0], pos_pca_2d[0, 1], c='red', s=100, marker='s', label='Start (pos 0)')
-    plt.scatter(pos_pca_2d[-1, 0], pos_pca_2d[-1, 1], c='blue', s=100, marker='^', label=f'End (pos {len(pos_pca_2d)-1})')
-    plt.xlabel(f'PC1 ({pca_2d.explained_variance_ratio_[0]:.2%})')
-    plt.ylabel(f'PC2 ({pca_2d.explained_variance_ratio_[1]:.2%})')
-    plt.title('Position Trajectory in PCA Space', pad=20)
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-
-    # Add position labels for small datasets
-    if plot_labels:
-        for i, (x, y) in enumerate(pos_pca_2d):
-            plt.annotate(str(i), (x, y), xytext=(5, 5), textcoords='offset points', fontsize=8, alpha=0.7)
-
-    # Plot 5: PC1 vs position index
-    plt.subplot(2, 3, 5)
-    plt.plot(range(len(pos_pca_2d)), pos_pca_2d[:, 0], 'o-', alpha=0.7)
-    plt.xlabel('Position Index')
-    plt.ylabel(f'PC1 Score ({pca_2d.explained_variance_ratio_[0]:.2%} var)')
-    plt.title('PC1 Scores vs Position', pad=20)
-    plt.grid(True, alpha=0.3)
-
-    # Plot 6: PC2 vs position index
-    plt.subplot(2, 3, 6)
-    plt.plot(range(len(pos_pca_2d)), pos_pca_2d[:, 1], 'o-', alpha=0.7, color='orange')
-    plt.xlabel('Position Index')
-    plt.ylabel(f'PC2 Score ({pca_2d.explained_variance_ratio_[1]:.2%} var)')
-    plt.title('PC2 Scores vs Position', pad=20)
-    plt.grid(True, alpha=0.3)
-
-    # Add proper spacing between subplots and adjust layout
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-    plt.subplots_adjust(left=0.08, right=0.95, top=0.88, bottom=0.12, hspace=0.45, wspace=0.35)
+    plt.tight_layout()
     plt.show()
 
     return {
@@ -996,6 +974,116 @@ def analyze_positional_embeddings_fourier(model, module = "encoder", figsize = (
         "fourier_projections": fourier_projections,
         "reconstruction_errors": reconstruction_errors,
 }
+
+
+def level_attention_comparison(model, examples, dataset, start_idx=0, att_head=0, figsize=(14, 20), cmap='Blues'):
+    """
+    4 rows x 2 columns: left column shows input/target/predicted Dyck paths with high
+    cross-attention positions (at step 0) highlighted in yellow; right column shows the
+    cross-attention heatmap at step 0.
+
+    High-attention positions are identified as those above the mean attention score,
+    which works well for the observed bimodal distribution (near-zero vs. high weights).
+
+    Args:
+        model: The transformer model
+        examples: Dict with 'inputs' and 'targets'
+        dataset: The dataset object (for decoding)
+        start_idx: Starting example index in examples
+        att_head: Attention head to visualize
+        figsize: Figure size
+        cmap: Colormap for the attention heatmap
+    """
+    fig, axes = plt.subplots(4, 2, figsize=figsize)
+
+    for row in range(4):
+        ex_idx = start_idx + row
+
+        inputs = examples['inputs'][ex_idx]
+        targets = examples['targets'][ex_idx]
+        max_new_tokens = targets.shape[0] - 1
+
+        outputs = model.generate_with_attention_tracking(
+            src=inputs.unsqueeze(0),
+            tgt=targets.unsqueeze(0)[:, :-max_new_tokens],
+            max_new_tokens=max_new_tokens,
+            temperature=1,
+            top_k=1
+        )
+
+        generated = outputs["generated_tokens"][0][-max_new_tokens:]
+        is_correct = (generated == targets[-max_new_tokens:]).all().item()
+
+        # Extract cross-attention at step 0
+        crs_att_raw = outputs['attention_history'][0]['decoder'][0]['cross_attention']
+        if crs_att_raw.dim() == 4:
+            crs_att = crs_att_raw[0, att_head, :, :]
+        elif crs_att_raw.dim() == 3:
+            crs_att = crs_att_raw[att_head, :, :]
+        else:
+            crs_att = crs_att_raw.squeeze()
+
+        if crs_att.dim() == 1:
+            crs_att = crs_att.unsqueeze(0)
+        elif crs_att.dim() > 2:
+            while crs_att.dim() > 2 and crs_att.size(0) == 1:
+                crs_att = crs_att.squeeze(0)
+
+        # Attention scores over input positions for the first generated token
+        att_scores = crs_att[0].cpu().numpy()  # shape: (src_len,)
+
+        # Mean threshold separates near-zero from high weights in the bimodal distribution
+        threshold = att_scores.mean()
+        high_att_positions = np.where(att_scores > threshold)[0]
+
+        # Build path coordinates; input_x[pos] is the node reached after attending to token pos
+        # word_to_path skips BOS, so lengths align: both input_x and att_scores have length src_len
+        input_decoded = decode(inputs.cpu().numpy(), dataset.dictionary).split()
+        input_x, input_y = word_to_path(input_decoded)
+        target_x, target_y = word_to_path(decode(targets.cpu().numpy(), dataset.dictionary).split())
+        gen_x, gen_y = word_to_path(decode(generated.cpu().numpy(), dataset.dictionary).split())
+
+        status_symbol = "✓" if is_correct else "✗"
+
+        # Left column: Dyck path visualization with high-attention positions in yellow
+        ax_path = axes[row, 0]
+        ax_path.plot(input_x, input_y, 'b-', label='Input', linewidth=2, alpha=0.7)
+        ax_path.plot(target_x, target_y, 'g-', label='Target', linewidth=2, alpha=0.7)
+        ax_path.plot(gen_x, gen_y, 'r--', label='Generated', linewidth=2, alpha=0.7)
+
+        for pos in high_att_positions:
+            if pos == 0 or pos >= len(input_x):
+                continue  # BOS has no step segment; skip out-of-range
+            # Draw the step segment from the previous node to the current node
+            ax_path.plot(
+                [input_x[pos - 1], input_x[pos]],
+                [input_y[pos - 1], input_y[pos]],
+                color='yellow', linewidth=4, zorder=4, solid_capstyle='round'
+            )
+
+        ax_path.set_title(f'Ex {ex_idx} {status_symbol}', fontsize=10)
+        ax_path.set_xlabel('x', fontsize=8)
+        ax_path.set_ylabel('y', fontsize=8)
+        if row == 0:
+            ax_path.legend(fontsize=7)
+        ax_path.grid(True, alpha=0.3)
+        ax_path.tick_params(axis='both', which='major', labelsize=8)
+
+        # Right column: Cross-attention heatmap at step 0
+        ax_att = axes[row, 1]
+        im = ax_att.imshow(crs_att.cpu().numpy(), cmap=cmap, aspect='auto')
+        ax_att.set_title(f'Cross-Attention Step 0, Head {att_head}', fontsize=10)
+        ax_att.set_xlabel('Input Position', fontsize=8)
+        ax_att.set_ylabel('Generated Position', fontsize=8)
+        ax_att.tick_params(axis='both', which='major', labelsize=8)
+        plt.colorbar(im, ax=ax_att, shrink=0.8, aspect=20)
+
+    plt.tight_layout()
+    fig.suptitle(
+        f'Level Attention Comparison — Cross-Attention Head {att_head} at Step 0',
+        fontsize=13, y=1.01
+    )
+    plt.show()
 
 
 def zero_cross_attention_to_token(model, dataset, criterion, token_id, device, n_batches = 16, eval_steps = list(range(1,10))):
