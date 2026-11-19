@@ -2,10 +2,9 @@ import time
 import torch
 import os
 import pickle
-from sage.all import DyckWords  # Import your DyckWords implementation
 
 
-def generate_dyck_data(n, data_path, force_regenerate=False, logger=None):
+def generate_dyck_data(n, data_path, force_regenerate=False, logger=None, target_map='zeta'):
     """
     Generate Dyck words data for training with caching.
     
@@ -14,6 +13,9 @@ def generate_dyck_data(n, data_path, force_regenerate=False, logger=None):
         data_path (str): Full path to the cached data file. If None, uses default path with n.
         force_regenerate (bool): If True, regenerate data even if cache exists
         logger: Optional logger instance for logging messages
+        target_map (str): Which bijection produces the targets.
+            'zeta'  -> SageMath's area_dinv_to_bounce_area_map (= rev ∘ ζ), requires SageMath.
+            any key of src.utils.dyck_maps.MAPS (e.g. 'kappa') -> pure-Python map, no SageMath needed.
         
     Returns:
         dict: Dictionary containing 'inputs' and 'targets' tensors
@@ -51,10 +53,23 @@ def generate_dyck_data(n, data_path, force_regenerate=False, logger=None):
     log_message(f"Generating Dyck words of semilength {n}...")
 
     data = {}
-    vecs = DyckWords(n)
-    data['inputs'] = torch.tensor([list(entry) for entry in vecs], dtype=torch.long)
-    data['targets'] = torch.tensor([entry.area_dinv_to_bounce_area_map() for entry in vecs], dtype=torch.long)
-    log_message("Using actual DyckWords implementation.")
+    if target_map == 'zeta':
+        # Imported lazily so that loading a cached dataset does not require SageMath.
+        from sage.all import DyckWords
+
+        vecs = DyckWords(n)
+        data['inputs'] = torch.tensor([list(entry) for entry in vecs], dtype=torch.long)
+        data['targets'] = torch.tensor([entry.area_dinv_to_bounce_area_map() for entry in vecs], dtype=torch.long)
+        log_message("Using actual DyckWords implementation.")
+    else:
+        from src.utils.dyck_maps import MAPS, dyck_words
+
+        if target_map not in MAPS:
+            raise ValueError(f"Unknown target_map '{target_map}'. Choose 'zeta' or one of {list(MAPS)}.")
+        words = dyck_words(n)  # same order as Sage's DyckWords(n)
+        data['inputs'] = torch.tensor(words, dtype=torch.long)
+        data['targets'] = torch.tensor([MAPS[target_map](w) for w in words], dtype=torch.long)
+        log_message(f"Using pure-Python '{target_map}' map from src.utils.dyck_maps.")
 
     log_message(f"Success. Generated {data['inputs'].shape[0]} sequences.")
     log_message(f"Input shape: {data['inputs'].shape}")

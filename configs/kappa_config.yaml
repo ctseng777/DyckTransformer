@@ -1,0 +1,36 @@
+# Minimal Dyck Transformer (same architecture as the paper's n13_head1 model) trained on the
+# kappa operator: κ(N x E y) = (NE · x) ⊠ y  (see src/utils/dyck_maps.py).
+# Generate the data first:  python dyck_data.py --n 13 --map kappa
+model:
+  src_vocab_size: 4
+  tgt_vocab_size: 4
+  d_model: 128
+  num_heads: 1
+  d_ff: 256
+  num_encoder_layers: 1
+  num_decoder_layers: 1
+  max_len: 128
+  dropout: 0
+  architecture: 'encoder_decoder'
+  is_sinusoidal: false
+  seed: 42
+
+training:
+  batch_size: 32
+  num_epochs: 30
+  learning_rate: 0.0001
+  weight_decay: 0.0
+  cache_dir: 'cache'
+  seed: 42
+
+data:
+  eval_size: 10000
+  n: 13
+  target_map: 'kappa'                  # 'zeta' (SageMath, default) or 'kappa'
+  data_path: 'data/kappa_data_13.pkl'
+  force_regenerate: false
+  seed: 42
+
+device:
+  use_cuda: true
+  use_mps: true                        # use Apple-Silicon GPU when CUDA is unavailable

@@ -48,7 +48,8 @@ def main(config_path, resume_from=None):
     n = config['data']['n']
     data_path = config['data'].get('data_path', None)  # None will use default path with n
     force_regenerate = config['data'].get('force_regenerate', False)
-    data = generate_dyck_data(n, data_path=data_path, force_regenerate=force_regenerate, logger=logger)
+    target_map = config['data'].get('target_map', 'zeta')  # 'zeta' (default) or e.g. 'kappa'
+    data = generate_dyck_data(n, data_path=data_path, force_regenerate=force_regenerate, logger=logger, target_map=target_map)
     # Initialize the dataset
     dataset = Dataset(data, config['data']['seed'], batch_size=config['training']['batch_size'])
 

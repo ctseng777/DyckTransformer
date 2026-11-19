@@ -58,7 +58,14 @@ class Trainer:
         self.criterion = nn.CrossEntropyLoss()
         
         # Set device
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # CUDA if available; Apple-Silicon MPS only when opted in via `device: use_mps: true`; else CPU.
+        use_mps = config.get('device', {}).get('use_mps', False)
+        if torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        elif use_mps and torch.backends.mps.is_available():
+            self.device = torch.device('mps')
+        else:
+            self.device = torch.device('cpu')
         self.logger.info(f"Training using device: {self.device}")
         self.model.to(self.device)
         
