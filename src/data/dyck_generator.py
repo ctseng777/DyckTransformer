@@ -4,7 +4,7 @@ import os
 import pickle
 
 
-def generate_dyck_data(n, data_path, force_regenerate=False, logger=None, target_map='zeta'):
+def generate_dyck_data(n, data_path, force_regenerate=False, logger=None, target_map='zeta', workers=1):
     """
     Generate Dyck words data for training with caching.
     
@@ -15,7 +15,10 @@ def generate_dyck_data(n, data_path, force_regenerate=False, logger=None, target
         logger: Optional logger instance for logging messages
         target_map (str): Which bijection produces the targets.
             'zeta'  -> SageMath's area_dinv_to_bounce_area_map (= rev ∘ ζ), requires SageMath.
+            'sieve' -> the recursive involution sieve sigma_n of src/utils/lemma_sieve.py (swaps area and dinv).
+                       Total only for n <= 11; also stores data['rules'] (which sieve rule paired each path).
             any key of src.utils.dyck_maps.MAPS (e.g. 'kappa') -> pure-Python map, no SageMath needed.
+        workers (int): processes used by the sieve computation for semilengths >= 8.
         
     Returns:
         dict: Dictionary containing 'inputs' and 'targets' tensors
@@ -61,11 +64,19 @@ def generate_dyck_data(n, data_path, force_regenerate=False, logger=None, target
         data['inputs'] = torch.tensor([list(entry) for entry in vecs], dtype=torch.long)
         data['targets'] = torch.tensor([entry.area_dinv_to_bounce_area_map() for entry in vecs], dtype=torch.long)
         log_message("Using actual DyckWords implementation.")
+    elif target_map == 'sieve':
+        from src.data.sieve_data import sieve_targets
+
+        words, targets, rules = sieve_targets(n, workers=workers, log=log_message)
+        data['inputs'] = torch.tensor(words, dtype=torch.long)
+        data['targets'] = torch.tensor(targets, dtype=torch.long)
+        data['rules'] = rules
+        log_message("Using the recursive involution sieve from src/utils/lemma_sieve.py.")
     else:
         from src.utils.dyck_maps import MAPS, dyck_words
 
         if target_map not in MAPS:
-            raise ValueError(f"Unknown target_map '{target_map}'. Choose 'zeta' or one of {list(MAPS)}.")
+            raise ValueError(f"Unknown target_map '{target_map}'. Choose 'zeta', 'sieve' or one of {list(MAPS)}.")
         words = dyck_words(n)  # same order as Sage's DyckWords(n)
         data['inputs'] = torch.tensor(words, dtype=torch.long)
         data['targets'] = torch.tensor([MAPS[target_map](w) for w in words], dtype=torch.long)

@@ -28,6 +28,26 @@ def area_sequence(w):
     return a
 
 
+def from_area_sequence(a):
+    '''Inverse of area_sequence: Dyck word (1 = N, 0 = E) with area sequence a.'''
+    w = []
+    for i, v in enumerate(a):
+        w.append(N)
+        nxt = a[i + 1] if i + 1 < len(a) else 0  # final run of E steps has length a_{n-1} + 1
+        w += [E] * (v + 1 - nxt)
+    return w
+
+
+def dinv(w):
+    '''Haglund's dinv: #{i < j : a_i - a_j in {0, 1}} on the area sequence.'''
+    a = area_sequence(w)
+    return sum(1 for i in range(len(a)) for j in range(i + 1, len(a)) if a[i] - a[j] in (0, 1))
+
+
+def area(w):
+    return sum(area_sequence(w))
+
+
 def first_return(w):
     '''Split non-empty w = N x E y at its first return to the diagonal; return (x, y).'''
     h = 0
